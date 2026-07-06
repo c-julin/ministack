@@ -4499,6 +4499,36 @@ def _describe_instance_attribute(p):
                 f"<instanceId>{instance_id}</instanceId>{value_xml}")
 
 
+# Real local-NVMe (instance store) layouts, keyed by instance type, as
+# (disk_count, disk_size_gb). Storage-bearing families matter to IaC tools:
+# Terraform's aws_ec2_instance_type data source exposes
+# InstanceStorageInfo.TotalSizeInGB and errors downstream when a type that
+# has instance storage on real AWS reports instanceStorageSupported=false.
+# Types not listed keep the generic no-instance-storage response.
+_INSTANCE_STORE_DISKS = {
+    # i3
+    "i3.large": (1, 475), "i3.xlarge": (1, 950), "i3.2xlarge": (1, 1900),
+    "i3.4xlarge": (2, 1900), "i3.8xlarge": (4, 1900), "i3.16xlarge": (8, 1900),
+    # i3en
+    "i3en.large": (1, 1250), "i3en.xlarge": (1, 2500), "i3en.2xlarge": (2, 2500),
+    "i3en.3xlarge": (1, 7500), "i3en.6xlarge": (2, 7500), "i3en.12xlarge": (4, 7500),
+    "i3en.24xlarge": (8, 7500),
+    # i4i
+    "i4i.large": (1, 468), "i4i.xlarge": (1, 937), "i4i.2xlarge": (1, 1875),
+    "i4i.4xlarge": (1, 3750), "i4i.8xlarge": (2, 3750), "i4i.16xlarge": (4, 3750),
+    # im4gn / is4gen (Graviton storage-optimized)
+    "im4gn.large": (1, 937), "im4gn.xlarge": (1, 1875), "im4gn.2xlarge": (1, 3750),
+    "im4gn.4xlarge": (1, 7500), "im4gn.8xlarge": (2, 7500), "im4gn.16xlarge": (4, 7500),
+    "is4gen.medium": (1, 937), "is4gen.large": (1, 1875), "is4gen.xlarge": (1, 3750),
+    "is4gen.2xlarge": (1, 7500), "is4gen.4xlarge": (2, 7500), "is4gen.8xlarge": (4, 7500),
+    # common "d" variants of general-purpose families
+    "m5d.large": (1, 75), "m5d.xlarge": (1, 150), "m5d.2xlarge": (1, 300),
+    "m5d.4xlarge": (2, 300), "c5d.large": (1, 50), "c5d.xlarge": (1, 100),
+    "c5d.2xlarge": (1, 200), "c5d.4xlarge": (1, 400),
+    "r5d.large": (1, 75), "r5d.xlarge": (1, 150), "r5d.2xlarge": (1, 300),
+}
+
+
 def _describe_instance_types(p):
     # Collect requested types
     requested = _parse_member_list(p, "InstanceType")
@@ -4513,6 +4543,22 @@ def _describe_instance_types(p):
         family = itype.split(".")[0]
         vcpus = 2 if "micro" in itype else 4 if "small" in itype else 8
         mem_mib = 1024 if "micro" in itype else 2048 if "small" in itype else 4096
+        store = _INSTANCE_STORE_DISKS.get(itype)
+        if store:
+            disk_count, disk_gb = store
+            storage_xml = f"""<instanceStorageSupported>true</instanceStorageSupported>
+            <instanceStorageInfo>
+                <totalSizeInGB>{disk_count * disk_gb}</totalSizeInGB>
+                <disks><item>
+                    <sizeInGB>{disk_gb}</sizeInGB>
+                    <count>{disk_count}</count>
+                    <type>ssd</type>
+                </item></disks>
+                <nvmeSupport>required</nvmeSupport>
+                <encryptionSupport>required</encryptionSupport>
+            </instanceStorageInfo>"""
+        else:
+            storage_xml = "<instanceStorageSupported>false</instanceStorageSupported>"
         items += f"""<item>
             <instanceType>{itype}</instanceType>
             <currentGeneration>true</currentGeneration>
@@ -4532,7 +4578,7 @@ def _describe_instance_types(p):
                 <defaultThreadsPerCore>1</defaultThreadsPerCore>
             </vCpuInfo>
             <memoryInfo><sizeInMiB>{mem_mib}</sizeInMiB></memoryInfo>
-            <instanceStorageSupported>false</instanceStorageSupported>
+            {storage_xml}
             <ebsInfo>
                 <ebsOptimizedSupport>unsupported</ebsOptimizedSupport>
                 <encryptionSupport>supported</encryptionSupport>
