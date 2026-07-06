@@ -4521,11 +4521,44 @@ _INSTANCE_STORE_DISKS = {
     "im4gn.4xlarge": (1, 7500), "im4gn.8xlarge": (2, 7500), "im4gn.16xlarge": (4, 7500),
     "is4gen.medium": (1, 937), "is4gen.large": (1, 1875), "is4gen.xlarge": (1, 3750),
     "is4gen.2xlarge": (1, 7500), "is4gen.4xlarge": (2, 7500), "is4gen.8xlarge": (4, 7500),
+    # m6gd / m7gd (Graviton general-purpose with NVMe)
+    "m6gd.medium": (1, 59), "m6gd.large": (1, 118), "m6gd.xlarge": (1, 237),
+    "m6gd.2xlarge": (1, 474), "m6gd.4xlarge": (1, 950), "m6gd.8xlarge": (1, 1900),
+    "m7gd.medium": (1, 59), "m7gd.large": (1, 118), "m7gd.xlarge": (1, 237),
+    "m7gd.2xlarge": (1, 474), "m7gd.4xlarge": (1, 950), "m7gd.8xlarge": (1, 1900),
     # common "d" variants of general-purpose families
     "m5d.large": (1, 75), "m5d.xlarge": (1, 150), "m5d.2xlarge": (1, 300),
     "m5d.4xlarge": (2, 300), "c5d.large": (1, 50), "c5d.xlarge": (1, 100),
     "c5d.2xlarge": (1, 200), "c5d.4xlarge": (1, 400),
     "r5d.large": (1, 75), "r5d.xlarge": (1, 150), "r5d.2xlarge": (1, 300),
+}
+
+# Real (vcpus, memory_mib) for the same storage-bearing types. The generic
+# size heuristic below reports 8 vCPU / 4 GiB for everything, which breaks
+# consumers that derive per-core memory requirements from this API (e.g. the
+# Redpanda operator validates ~2 GiB per core and rejects the 8-core/4-GiB
+# shape outright).
+_INSTANCE_SPECS = {
+    "i3.large": (2, 15616), "i3.xlarge": (4, 31232), "i3.2xlarge": (8, 62464),
+    "i3.4xlarge": (16, 124928), "i3.8xlarge": (32, 249856), "i3.16xlarge": (64, 499712),
+    "i3en.large": (2, 16384), "i3en.xlarge": (4, 32768), "i3en.2xlarge": (8, 65536),
+    "i3en.3xlarge": (12, 98304), "i3en.6xlarge": (24, 196608),
+    "i3en.12xlarge": (48, 393216), "i3en.24xlarge": (96, 786432),
+    "i4i.large": (2, 16384), "i4i.xlarge": (4, 32768), "i4i.2xlarge": (8, 65536),
+    "i4i.4xlarge": (16, 131072), "i4i.8xlarge": (32, 262144), "i4i.16xlarge": (64, 524288),
+    "im4gn.large": (2, 8192), "im4gn.xlarge": (4, 16384), "im4gn.2xlarge": (8, 32768),
+    "im4gn.4xlarge": (16, 65536), "im4gn.8xlarge": (32, 131072), "im4gn.16xlarge": (64, 262144),
+    "is4gen.medium": (1, 6144), "is4gen.large": (2, 12288), "is4gen.xlarge": (4, 24576),
+    "is4gen.2xlarge": (8, 49152), "is4gen.4xlarge": (16, 98304), "is4gen.8xlarge": (32, 196608),
+    "m6gd.medium": (1, 4096), "m6gd.large": (2, 8192), "m6gd.xlarge": (4, 16384),
+    "m6gd.2xlarge": (8, 32768), "m6gd.4xlarge": (16, 65536), "m6gd.8xlarge": (32, 131072),
+    "m7gd.medium": (1, 4096), "m7gd.large": (2, 8192), "m7gd.xlarge": (4, 16384),
+    "m7gd.2xlarge": (8, 32768), "m7gd.4xlarge": (16, 65536), "m7gd.8xlarge": (32, 131072),
+    "m5d.large": (2, 8192), "m5d.xlarge": (4, 16384), "m5d.2xlarge": (8, 32768),
+    "m5d.4xlarge": (16, 65536),
+    "c5d.large": (2, 4096), "c5d.xlarge": (4, 8192), "c5d.2xlarge": (8, 16384),
+    "c5d.4xlarge": (16, 32768),
+    "r5d.large": (2, 16384), "r5d.xlarge": (4, 32768), "r5d.2xlarge": (8, 65536),
 }
 
 
@@ -4541,8 +4574,12 @@ def _describe_instance_types(p):
     items = ""
     for itype in all_types:
         family = itype.split(".")[0]
-        vcpus = 2 if "micro" in itype else 4 if "small" in itype else 8
-        mem_mib = 1024 if "micro" in itype else 2048 if "small" in itype else 4096
+        spec = _INSTANCE_SPECS.get(itype)
+        if spec:
+            vcpus, mem_mib = spec
+        else:
+            vcpus = 2 if "micro" in itype else 4 if "small" in itype else 8
+            mem_mib = 1024 if "micro" in itype else 2048 if "small" in itype else 4096
         store = _INSTANCE_STORE_DISKS.get(itype)
         if store:
             disk_count, disk_gb = store
