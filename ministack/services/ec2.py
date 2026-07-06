@@ -2091,14 +2091,56 @@ def _describe_vpc_endpoint_services(p):
 # Availability Zones
 # ---------------------------------------------------------------------------
 
+def _region_az_abbrev(region):
+    """AWS-style zone-id prefix for a region: us-east-1 -> use1,
+    eu-central-1 -> euc1, ap-southeast-2 -> apse2."""
+    directions = {
+        "northeast": "ne", "northwest": "nw", "southeast": "se",
+        "southwest": "sw", "north": "n", "south": "s",
+        "east": "e", "west": "w", "central": "c",
+    }
+    parts = region.split("-")
+    if len(parts) < 3:
+        return region.replace("-", "")
+    return parts[0] + "".join(directions.get(w, w[0]) for w in parts[1:-1]) + parts[-1]
+
+
 def _describe_availability_zones(p):
-    azs = [f"{get_region()}a", f"{get_region()}b", f"{get_region()}c"]
+    region = get_region()
+    prefix = _region_az_abbrev(region)
+    # us-east-1 really has 6 AZs and IaC frequently assumes >3 there;
+    # 3 is representative everywhere else. Zone ids follow the real
+    # <abbrev>-az<N> shape with a stable name<->id mapping, and the
+    # ZoneName/ZoneId params plus zone-name/zone-id filters are honored:
+    # consumers that resolve subnets by AvailabilityZoneId (e.g. the AWS
+    # load balancer controller) break when a filtered query returns more
+    # zones than it asked for.
+    count = 6 if region == "us-east-1" else 3
+    zones = [
+        {"name": f"{region}{chr(ord('a') + i)}", "id": f"{prefix}-az{i + 1}"}
+        for i in range(count)
+    ]
+
+    requested_names = _parse_member_list(p, "ZoneName")
+    requested_ids = _parse_member_list(p, "ZoneId")
+    for fname, fvals in _parse_filters(p).items():
+        if fname == "zone-name":
+            requested_names.extend(fvals)
+        elif fname == "zone-id":
+            requested_ids.extend(fvals)
+
+    if requested_names:
+        zones = [z for z in zones if z["name"] in requested_names]
+    if requested_ids:
+        zones = [z for z in zones if z["id"] in requested_ids]
+
     items = "".join(f"""<item>
-        <zoneName>{az}</zoneName>
+        <zoneName>{z['name']}</zoneName>
         <zoneState>available</zoneState>
-        <regionName>{get_region()}</regionName>
-        <zoneId>{az}</zoneId>
-    </item>""" for az in azs)
+        <regionName>{region}</regionName>
+        <zoneId>{z['id']}</zoneId>
+        <zoneType>availability-zone</zoneType>
+    </item>""" for z in zones)
     return _xml(200, "DescribeAvailabilityZonesResponse",
                 f"<availabilityZoneInfo>{items}</availabilityZoneInfo>")
 
