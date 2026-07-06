@@ -1593,13 +1593,25 @@ def _matches_subnet_filters(subnet, filters):
 def _create_subnet(p):
     vpc_id = _p(p, "VpcId") or _DEFAULT_VPC_ID
     cidr = _p(p, "CidrBlock") or "10.0.1.0/24"
-    az = _p(p, "AvailabilityZone") or f"{get_region()}a"
+    # CreateSubnet accepts either an AZ name or an AZ id; keep the stored
+    # name<->id pair consistent either way. Terraform's aws_subnet commonly
+    # passes availability_zone_id, and consumers like the AWS load balancer
+    # controller resolve subnets back through AvailabilityZoneId.
+    az = _p(p, "AvailabilityZone")
+    az_id = _p(p, "AvailabilityZoneId")
+    if not az and az_id:
+        az = _zone_name_for_id(az_id) or f"{get_region()}a"
+    if not az:
+        az = f"{get_region()}a"
+    if not az_id:
+        az_id = _zone_id_for_name(az) or _region_zones()[0]["id"]
     subnet_id = _new_subnet_id()
     _subnets[subnet_id] = {
         "SubnetId": subnet_id,
         "VpcId": vpc_id,
         "CidrBlock": cidr,
         "AvailabilityZone": az,
+        "AvailabilityZoneId": az_id,
         "AvailableIpAddressCount": 251,
         "State": "available",
         "DefaultForAz": False,
@@ -2105,21 +2117,42 @@ def _region_az_abbrev(region):
     return parts[0] + "".join(directions.get(w, w[0]) for w in parts[1:-1]) + parts[-1]
 
 
-def _describe_availability_zones(p):
+def _region_zones():
+    """The region's AZs as {name, id} dicts with a stable name<->id mapping.
+
+    us-east-1 really has 6 AZs and IaC frequently assumes >3 there; 3 is
+    representative everywhere else. Zone ids follow the real
+    <abbrev>-az<N> shape (use1-az1, euc1-az2, ...)."""
     region = get_region()
     prefix = _region_az_abbrev(region)
-    # us-east-1 really has 6 AZs and IaC frequently assumes >3 there;
-    # 3 is representative everywhere else. Zone ids follow the real
-    # <abbrev>-az<N> shape with a stable name<->id mapping, and the
-    # ZoneName/ZoneId params plus zone-name/zone-id filters are honored:
-    # consumers that resolve subnets by AvailabilityZoneId (e.g. the AWS
-    # load balancer controller) break when a filtered query returns more
-    # zones than it asked for.
     count = 6 if region == "us-east-1" else 3
-    zones = [
+    return [
         {"name": f"{region}{chr(ord('a') + i)}", "id": f"{prefix}-az{i + 1}"}
         for i in range(count)
     ]
+
+
+def _zone_name_for_id(zone_id):
+    for z in _region_zones():
+        if z["id"] == zone_id:
+            return z["name"]
+    return None
+
+
+def _zone_id_for_name(zone_name):
+    for z in _region_zones():
+        if z["name"] == zone_name:
+            return z["id"]
+    return None
+
+
+def _describe_availability_zones(p):
+    region = get_region()
+    # The ZoneName/ZoneId params plus zone-name/zone-id filters are
+    # honored: consumers that resolve subnets by AvailabilityZoneId (e.g.
+    # the AWS load balancer controller) break when a filtered query
+    # returns more zones than it asked for.
+    zones = _region_zones()
 
     requested_names = _parse_member_list(p, "ZoneName")
     requested_ids = _parse_member_list(p, "ZoneId")
@@ -2873,6 +2906,7 @@ def _subnet_fields_xml(subnet, tag="item"):
         <cidrBlock>{subnet['CidrBlock']}</cidrBlock>
         <availableIpAddressCount>{subnet['AvailableIpAddressCount']}</availableIpAddressCount>
         <availabilityZone>{subnet['AvailabilityZone']}</availabilityZone>
+        <availabilityZoneId>{subnet.get('AvailabilityZoneId') or _zone_id_for_name(subnet['AvailabilityZone']) or ''}</availabilityZoneId>
         <defaultForAz>{'true' if subnet['DefaultForAz'] else 'false'}</defaultForAz>
         <mapPublicIpOnLaunch>{'true' if subnet['MapPublicIpOnLaunch'] else 'false'}</mapPublicIpOnLaunch>
         <ownerId>{subnet['OwnerId']}</ownerId>
